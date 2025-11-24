@@ -22,6 +22,6 @@ lint-check-deps:
 
 .PHONY: gen-fb
 gen-fb:
-	@flatc --go -o pkg/fb schema/raft.fbs
+	@flatc --go -o pkg/gen/go/fb schema/raft.fbs
 
 
