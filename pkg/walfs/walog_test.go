@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ankur-anand/unisondb/pkg/walfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/unijord/unijord/pkg/walfs"
 )
 
 func TestSegmentManager_RecoverSegments_Sealing(t *testing.T) {

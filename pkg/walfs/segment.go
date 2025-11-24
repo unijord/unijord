@@ -247,6 +247,23 @@ type Segment struct {
 	firstLogIndex uint64
 }
 
+// LastLogIndex returns the last log index stored in this segment.
+func (seg *Segment) LastLogIndex() uint64 {
+	seg.writeMu.RLock()
+	defer seg.writeMu.RUnlock()
+	if len(seg.indexEntries) == 0 {
+		return 0
+	}
+	// Assuming log indexes are sequential and we have the count.
+	// But we don't store the log index in the index entry explicitly.
+	// However, we know the first log index.
+	// So last = first + count - 1.
+	if seg.firstLogIndex == 0 {
+		return 0
+	}
+	return seg.firstLogIndex + uint64(len(seg.indexEntries)) - 1
+}
+
 // WithSyncOption sets the sync option for the Segment.
 func WithSyncOption(opt MsyncOption) func(*Segment) {
 	return func(s *Segment) {

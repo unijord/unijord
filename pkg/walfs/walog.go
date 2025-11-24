@@ -566,6 +566,22 @@ func (wl *WALog) SegmentForIndex(idx uint64) (SegmentID, int, error) {
 		slot := int(idx - r.firstIndex)
 		return r.id, slot, nil
 	}
+
+	// Fallback: check current segment explicitly.
+	// The current segment might have grown since ensureSegmentRangesLocked was called
+	// (because we don't update ranges on every write).
+	if wl.currentSegment != nil {
+		first := wl.currentSegment.FirstLogIndex()
+		if first > 0 {
+			count := wl.currentSegment.GetEntryCount()
+			high := first + uint64(count)
+			if idx >= first && idx < high {
+				slot := int(idx - first)
+				return wl.currentSegment.ID(), slot, nil
+			}
+		}
+	}
+
 	return 0, 0, fmt.Errorf("log index %d not found", idx)
 }
 
