@@ -1,0 +1,72 @@
+namespace raft;
+
+enum CommandType:byte {
+  UNKNOWN = 0,
+  APPEND_DATA = 1,
+  SEGMENT_SEALED = 2,
+  SEGMENT_UPLOADED = 3,
+  SEGMENT_PARQUET_COMMITTED = 4,
+}
+
+enum SegmentState:byte {
+  ACTIVE = 0,
+  PENDING_UPLOAD = 1,
+  UPLOADED = 2,
+  PARQUET_COMMITTED = 3,
+}
+
+table SegmentSealedCommand {
+  shard_id: string;
+  segment_id: uint;
+  first_index: ulong;
+  last_index: ulong;
+}
+
+table SegmentUploadedCommand {
+  shard_id: string;
+  segment_id: uint;
+  object_bucket: string;
+  object_key: string;
+  object_size_bytes: ulong;
+  object_checksum: string;
+}
+
+table SegmentParquetCommittedCommand {
+  shard_id: string;
+  segment_id: uint;
+  parquet_files: [string];
+  iceberg_table: string;       
+  iceberg_snapshot_id: ulong;
+}
+
+union CommandPayload {
+  SegmentSealedCommand,
+  SegmentUploadedCommand,
+  SegmentParquetCommittedCommand,
+}
+
+table RaftCommand {
+  type: CommandType;
+
+  // For APPEND_DATA; opaque application payload.
+  data: [ubyte];
+
+  // For SEGMENT_* commands; Raft FSM interprets this union based on 'type'.
+  payload: CommandPayload;
+}
+
+// we will use this as the local snapshot
+table SegmentStateEntry {
+  segment_id: uint;
+  state: SegmentState;
+}
+
+table SegmentStateSnapshot {
+  shard_id: string;
+  segments: [SegmentStateEntry];
+
+  last_applied_index: ulong;
+  last_applied_term: ulong;
+}
+
+root_type RaftCommand;
