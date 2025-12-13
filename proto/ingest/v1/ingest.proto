@@ -1,0 +1,234 @@
+syntax = "proto3";
+
+package ingest.v1;
+
+option go_package = "github.com/unijord/unijord/pkg/gen/go/proto/ingest/v1;ingestv1";
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+// OpenAPI spec metadata
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "Unijord Ingest API";
+    version: "1.0";
+    description: "Lakehouse-native event streaming. Events in, tables out.";
+    contact: {
+      name: "Unijord";
+      url: "https://unijord.io";
+    };
+  };
+  schemes: HTTPS;
+  consumes: "application/json";
+  produces: "application/json";
+};
+
+// IngestService handles event ingestion into Unijord.
+//
+// Routing headers:
+//   - x-namespace: Tenant isolation boundary (K8s-native)
+//   - x-topic: Stream/topic name
+//   - x-routing-key: Shard affinity for consistent hashing (used by Envoy)
+service IngestService {
+  // Append ingests a batch of events. Returns after Raft commit.
+  rpc Append(AppendRequest) returns (AppendResponse) {
+    option (google.api.http) = {
+      post: "/v1/events"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Ingest events";
+      description: "Append a batch of events. Set x-namespace and x-topic headers for routing.";
+      tags: "Ingest";
+    };
+  }
+
+  // AppendStream ingests events via bidirectional streaming.
+  rpc AppendStream(stream AppendRequest) returns (stream AppendResponse);
+
+  // GetStatus returns the current ingestor status.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {
+    option (google.api.http) = {
+      get: "/v1/status"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get ingestor status";
+      description: "Returns health, leader info, and segment statistics.";
+      tags: "Status";
+    };
+  }
+
+  // GetLeader returns the current Raft leader address for client routing.
+  rpc GetLeader(GetLeaderRequest) returns (GetLeaderResponse) {
+    option (google.api.http) = {
+      get: "/v1/leader"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get current leader";
+      description: "Returns the Raft leader address for client redirect.";
+      tags: "Status";
+    };
+  }
+}
+
+// CompressionType for event payloads.
+enum CompressionType {
+  COMPRESSION_TYPE_UNSPECIFIED = 0;
+  COMPRESSION_TYPE_NONE = 1;
+  COMPRESSION_TYPE_SNAPPY = 2;
+  COMPRESSION_TYPE_ZSTD = 3;
+}
+
+// KeyValue for event metadata.
+message KeyValue {
+  string key = 1;
+  bytes value = 2;
+}
+
+// Event represents a single event to ingest.
+message Event {
+  // Client-provided UUID (16 bytes).
+  bytes event_id = 1 [(google.api.field_behavior) = REQUIRED];
+
+  // Event type for self-describing data (e.g., "order.created", "user.signup").
+  string event_type = 2 [(google.api.field_behavior) = REQUIRED];
+
+  // When the event occurred (microseconds since Unix epoch).
+  // If 0, server will use current time.
+  uint64 occurred_at = 3;
+
+  // Event payload (Avro, JSON, Protobuf - opaque to Unijord).
+  // Currently only Avro is supported for schema registry integration.
+  bytes payload = 4 [(google.api.field_behavior) = REQUIRED];
+
+  // Compression applied to payload.
+  CompressionType compression = 5;
+
+  // Schema registry ID for payload deserialization.
+  uint32 schema_id = 6;
+
+  // Used by server to derive storage partition paths when topic config references metadata.{key}.
+  repeated KeyValue metadata = 7;
+}
+
+// AppendRequest contains a batch of events to ingest.
+//
+// Routing is handled via headers:
+//   - x-namespace: Tenant isolation (from header or server config)
+//   - x-topic: Stream/topic name (from header)
+//   - x-routing-key: For Envoy consistent hash routing to shards
+message AppendRequest {
+  // Events to ingest (max 1000 per batch).
+  repeated Event events = 1 [(google.api.field_behavior) = REQUIRED];
+
+  // Request timeout hint (milliseconds). Server may use for backpressure.
+  uint32 timeout_ms = 2;
+
+  // Routing key for shard affinity.
+  // Events with the same routing_key go to the same shard (via Envoy ring hash).
+  // Also exposed as x-routing-key header for Envoy-based routing.
+  // If empty, requests are distributed round-robin across shards.
+  string routing_key = 3;
+}
+
+// AppendResponse contains the result of an append operation.
+message AppendResponse {
+  // Whether the append succeeded.
+  bool success = 1;
+
+  // Error code if failed.
+  ErrorCode error_code = 2;
+
+  string error_message = 3;
+
+  // LSN (Log Sequence Number) of this committed batch.
+  uint64 committed_lsn = 4;
+
+  // Number of events successfully ingested.
+  uint32 ingested_count = 5;
+
+  // Backpressure: client should wait this many ms before retrying.
+  uint32 retry_after_ms = 6;
+
+  // Current load percentage (0-100) for client flow control.
+  uint32 current_load_pct = 7;
+
+  // Leader address if this node is not the leader.
+  // (for client redirect)
+  string leader_address = 8;
+}
+
+// ErrorCode categorizes append failures.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_OK = 1;
+  ERROR_CODE_INVALID_REQUEST = 2;
+  ERROR_CODE_INVALID_NAMESPACE = 3;
+  ERROR_CODE_INVALID_TOPIC = 4;
+  ERROR_CODE_INVALID_EVENT = 5;
+  ERROR_CODE_PAYLOAD_TOO_LARGE = 6;
+  ERROR_CODE_RATE_LIMITED = 7;
+  ERROR_CODE_NOT_LEADER = 8;
+  ERROR_CODE_NO_QUORUM = 9;
+  ERROR_CODE_TIMEOUT = 10;
+  ERROR_CODE_SCHEMA_NOT_FOUND = 11;
+  ERROR_CODE_INTERNAL = 99;
+}
+
+// GetStatusRequest for health/status checks.
+message GetStatusRequest {}
+
+// GetStatusResponse returns ingestor status.
+message GetStatusResponse {
+  // Node identifier.
+  string node_id = 1;
+
+  // Shard this ingestor handles.
+  string shard_id = 2;
+
+  // Whether this node is the Raft leader.
+  bool is_leader = 3;
+
+  // Current leader address (if known).
+  string leader_address = 4;
+
+  // Raft term.
+  uint64 raft_term = 5;
+
+  // Last applied Raft index.
+  uint64 last_applied_index = 6;
+
+  // Active segment info.
+  uint32 active_segment_id = 7;
+  uint64 active_segment_bytes = 8;
+  uint64 active_segment_entries = 9;
+
+  // Pending segments awaiting processing.
+  uint32 pending_segments = 10;
+
+  // Node health status.
+  HealthStatus health = 11;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}
+
+// GetLeaderRequest for leader discovery.
+message GetLeaderRequest {}
+
+// GetLeaderResponse returns the current leader.
+message GetLeaderResponse {
+  // Leader node ID.
+  string leader_id = 1;
+
+  // Leader gRPC address for client redirect.
+  string leader_address = 2;
+
+  // Whether this node is the leader.
+  bool is_self = 3;
+}
