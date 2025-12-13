@@ -241,27 +241,11 @@ type Segment struct {
 	syncOption     MsyncOption
 	dirSyncer      DirectorySyncer
 
-	indexPath     string
-	indexEntries  []segmentIndexEntry
-	indexFlush    sync.WaitGroup
-	firstLogIndex uint64
-}
-
-// LastLogIndex returns the last log index stored in this segment.
-func (seg *Segment) LastLogIndex() uint64 {
-	seg.writeMu.RLock()
-	defer seg.writeMu.RUnlock()
-	if len(seg.indexEntries) == 0 {
-		return 0
-	}
-	// Assuming log indexes are sequential and we have the count.
-	// But we don't store the log index in the index entry explicitly.
-	// However, we know the first log index.
-	// So last = first + count - 1.
-	if seg.firstLogIndex == 0 {
-		return 0
-	}
-	return seg.firstLogIndex + uint64(len(seg.indexEntries)) - 1
+	indexPath         string
+	indexEntries      []segmentIndexEntry
+	indexFlush        sync.WaitGroup
+	firstLogIndex     uint64
+	clearIndexOnFlush bool
 }
 
 // WithSyncOption sets the sync option for the Segment.
@@ -277,6 +261,14 @@ func WithSegmentDirectorySyncer(syncer DirectorySyncer) func(*Segment) {
 		if syncer != nil {
 			s.dirSyncer = syncer
 		}
+	}
+}
+
+// withClearIndexOnFlush enables clearing the in-memory index after it's flushed to disk.
+// This is useful when an external index is maintained.
+func withClearIndexOnFlush() func(*Segment) {
+	return func(s *Segment) {
+		s.clearIndexOnFlush = true
 	}
 }
 
@@ -427,14 +419,22 @@ func (seg *Segment) flushIndexToFile(entries []segmentIndexEntry) error {
 	if seg.indexPath == "" {
 		return nil
 	}
-	file, err := os.OpenFile(seg.indexPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileModePerm)
+	indexDir := filepath.Dir(seg.indexPath)
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		return fmt.Errorf("ensure index dir: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(indexDir, filepath.Base(seg.indexPath)+".tmp")
 	if err != nil {
 		return fmt.Errorf("open index for flush: %w", err)
 	}
-	writer := bufio.NewWriterSize(file, 32*1024)
+	tmpPath := tmpFile.Name()
+
+	writer := bufio.NewWriterSize(tmpFile, 32*1024)
 	defer func() {
 		_ = writer.Flush()
-		_ = file.Close()
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 	}()
 
 	buf := make([]byte, indexEntrySize)
@@ -452,8 +452,23 @@ func (seg *Segment) flushIndexToFile(entries []segmentIndexEntry) error {
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("flush index writer: %w", err)
 	}
-	if err := file.Sync(); err != nil {
+	if err := tmpFile.Sync(); err != nil {
 		return fmt.Errorf("sync index file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close index file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, seg.indexPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename index file: %w", err)
+	}
+
+	if seg.dirSyncer != nil {
+		if err := seg.dirSyncer.SyncDir(indexDir); err != nil {
+			return fmt.Errorf("fsync index directory: %w", err)
+		}
 	}
 	return nil
 }
@@ -478,8 +493,20 @@ func (seg *Segment) IndexEntries() []IndexEntry {
 	return entries
 }
 
+// ClearIndexFromMemory releases the in-memory index entries to free memory.
+// This can be called after the index has been copied to an external data structure.
+// Note: After calling this, IndexEntries() will return an empty slice.
+// Only sealed segments can be cleared; active segments are ignored.
+func (seg *Segment) ClearIndexFromMemory() {
+	if !seg.isSealed.Load() {
+		return
+	}
+	seg.indexEntries = nil
+}
+
 func (seg *Segment) flushIndexAsync() {
 	entriesCopy := append([]segmentIndexEntry(nil), seg.indexEntries...)
+	clearOnFlush := seg.clearIndexOnFlush
 	seg.indexFlush.Add(1)
 	go func(path string) {
 		defer seg.indexFlush.Done()
@@ -488,6 +515,11 @@ func (seg *Segment) flushIndexAsync() {
 				slog.String("message", "failed to flush index"),
 				slog.Uint64("segment_id", uint64(seg.id)),
 				slog.Any("error", err))
+			return
+		}
+		// clear in-memory index after successful flush if option is enabled
+		if clearOnFlush {
+			seg.indexEntries = nil
 		}
 	}(seg.indexPath)
 }
@@ -543,6 +575,11 @@ func (seg *Segment) MarkSealedInMemory() {
 // IsInMemorySealed returns true if the segment has been marked as sealed in memory.
 func (seg *Segment) IsInMemorySealed() bool {
 	return seg.inMemorySealed.Load()
+}
+
+// IsSealed returns true if the segment is sealed (on-disk flag).
+func (seg *Segment) IsSealed() bool {
+	return seg.isSealed.Load()
 }
 
 func isNewSegment(path string) (bool, error) {
@@ -1231,4 +1268,108 @@ func SegmentFileName(dirPath string, extName string, id SegmentID) string {
 // SegmentIndexFileName returns the file name of the index for a segment.
 func SegmentIndexFileName(dirPath string, extName string, id SegmentID) string {
 	return filepath.Join(dirPath, fmt.Sprintf("%09d"+extName+".idx", id))
+}
+
+// TruncateTo truncates the segment to the specified log index.
+// All entries after the given log index will be discarded.
+// If the log index is not found in this segment, it returns an error.
+func (seg *Segment) TruncateTo(logIndex uint64) error {
+	seg.writeMu.Lock()
+	defer seg.writeMu.Unlock()
+
+	if seg.closed.Load() {
+		return ErrClosed
+	}
+
+	if len(seg.indexEntries) == 0 && seg.writeOffset.Load() <= int64(segmentHeaderSize) {
+		return fmt.Errorf("segment is empty, cannot truncate to %d", logIndex)
+	}
+
+	if logIndex < seg.firstLogIndex {
+		return fmt.Errorf("log index %d is before segment start %d", logIndex, seg.firstLogIndex)
+	}
+
+	relativeIndex := int(logIndex - seg.firstLogIndex)
+	if relativeIndex >= len(seg.indexEntries) {
+		return fmt.Errorf("log index %d not found in segment index (max relative %d)", logIndex, len(seg.indexEntries)-1)
+	}
+
+	targetEntry := seg.indexEntries[relativeIndex]
+
+	rawSize := int64(recordHeaderSize) + int64(targetEntry.Length) + int64(recordTrailerMarkerSize)
+	entrySize := alignUp(rawSize)
+
+	newWriteOffset := int64(targetEntry.Offset) + entrySize
+	seg.writeOffset.Store(newWriteOffset)
+	seg.indexEntries = seg.indexEntries[:relativeIndex+1]
+
+	newEntryCount := int64(relativeIndex + 1)
+
+	seg.applyTruncateHeader(newWriteOffset, newEntryCount)
+	seg.zeroAheadFrom(newWriteOffset)
+
+	if err := seg.MSync(); err != nil {
+		return fmt.Errorf("failed to sync truncated segment: %w", err)
+	}
+
+	if err := seg.flushIndexToFile(seg.indexEntries); err != nil {
+		return fmt.Errorf("failed to flush truncated index: %w", err)
+	}
+
+	return nil
+}
+
+func (seg *Segment) applyTruncateHeader(newWriteOffset int64, newEntryCount int64) {
+	binary.LittleEndian.PutUint64(seg.mmapData[24:32], uint64(newWriteOffset))
+	binary.LittleEndian.PutUint64(seg.mmapData[32:40], uint64(newEntryCount))
+	binary.LittleEndian.PutUint64(seg.mmapData[16:24], uint64(time.Now().UnixNano()))
+
+	flags := binary.LittleEndian.Uint32(seg.mmapData[40:44])
+	if IsSealed(flags) {
+		flags &^= FlagSealed
+		flags |= FlagActive
+		binary.LittleEndian.PutUint32(seg.mmapData[40:44], flags)
+		seg.isSealed.Store(false)
+		seg.inMemorySealed.Store(false)
+	}
+
+	crc := crc32.Checksum(seg.mmapData[0:56], crcTable)
+	binary.LittleEndian.PutUint32(seg.mmapData[56:60], crc)
+}
+
+func (seg *Segment) zeroAheadFrom(offset int64) {
+	clearEnd := offset + 1024
+	if clearEnd > seg.mmapSize {
+		clearEnd = seg.mmapSize
+	}
+	for i := offset; i < clearEnd; i++ {
+		seg.mmapData[i] = 0
+	}
+}
+
+// Remove closes the segment and removes its underlying files (segment and index).
+func (seg *Segment) Remove() error {
+	if err := seg.Close(); err != nil {
+		return fmt.Errorf("failed to close segment %d: %w", seg.id, err)
+	}
+
+	dir := filepath.Dir(seg.path)
+
+	if err := os.Remove(seg.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove segment file %s: %w", seg.path, err)
+	}
+
+	if seg.indexPath != "" {
+		if err := os.Remove(seg.indexPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove index file %s: %w", seg.indexPath, err)
+		}
+	}
+
+	if seg.dirSyncer != nil {
+		if err := seg.dirSyncer.SyncDir(dir); err != nil {
+			return fmt.Errorf("failed to sync directory after removal: %w", err)
+		}
+	}
+
+	return nil
 }

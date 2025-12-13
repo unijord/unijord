@@ -108,6 +108,14 @@ func WithDirectorySyncer(syncer DirectorySyncer) WALogOptions {
 	}
 }
 
+// WithClearIndexOnFlush enables clearing segment's in-memory index after it's flushed to disk.
+// This is useful when an external index is maintained.
+func WithClearIndexOnFlush() WALogOptions {
+	return func(sm *WALog) {
+		sm.clearIndexOnFlush = true
+	}
+}
+
 // WALog manages the lifecycle of each individual segments, including creation, rotation,
 // recovery, and read/write operations.
 type WALog struct {
@@ -142,6 +150,7 @@ type WALog struct {
 	deletionMu          sync.Mutex
 	pendingDeletion     map[SegmentID]*Segment
 	dirSyncer           DirectorySyncer
+	clearIndexOnFlush   bool
 }
 
 type segmentRange struct {
@@ -151,9 +160,6 @@ type segmentRange struct {
 }
 
 func (wl *WALog) ensureSegmentRangesLocked() {
-	if len(wl.segmentRanges) == len(wl.segments) {
-		return
-	}
 	ranges := wl.segmentRanges[:0]
 	for id, seg := range wl.segments {
 		first := seg.FirstLogIndex()
@@ -219,14 +225,16 @@ func (wl *WALog) openSegment(id uint32) (*Segment, error) {
 		return nil, fmt.Errorf("checking segment %d state: %w", id, err)
 	}
 
-	seg, err := OpenSegmentFile(
-		wl.dir,
-		wl.ext,
-		id,
+	opts := []func(*Segment){
 		WithSegmentSize(wl.maxSegmentSize),
 		WithSyncOption(wl.forceSyncEveryWrite),
 		WithSegmentDirectorySyncer(wl.dirSyncer),
-	)
+	}
+	if wl.clearIndexOnFlush {
+		opts = append(opts, withClearIndexOnFlush())
+	}
+
+	seg, err := OpenSegmentFile(wl.dir, wl.ext, id, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -422,13 +430,10 @@ func (wl *WALog) WriteBatch(records [][]byte, logIndexes []uint64) ([]RecordPosi
 func (wl *WALog) writeBatchLocked(records [][]byte, logIndexes []uint64) ([]RecordPosition, error) {
 	var allPositions []RecordPosition
 	remaining := records
+	remainingIndexes := logIndexes
 
 	for len(remaining) > 0 {
-		var indexes []uint64
-		if logIndexes != nil {
-			indexes = logIndexes[len(records)-len(remaining):]
-		}
-		positions, written, batchErr := wl.currentSegment.WriteBatch(remaining, indexes)
+		positions, written, batchErr := wl.currentSegment.WriteBatch(remaining, remainingIndexes)
 
 		if batchErr != nil && !errors.Is(batchErr, ErrSegmentFull) {
 			return allPositions, batchErr
@@ -461,8 +466,8 @@ func (wl *WALog) writeBatchLocked(records [][]byte, logIndexes []uint64) ([]Reco
 		// segment is full - rotate and continue with remaining records
 		if errors.Is(batchErr, ErrSegmentFull) && written < len(remaining) {
 			remaining = remaining[written:]
-			if logIndexes != nil {
-				logIndexes = logIndexes[written:]
+			if remainingIndexes != nil {
+				remainingIndexes = remainingIndexes[written:]
 			}
 			if rotateErr := wl.rotateSegment(); rotateErr != nil {
 				return allPositions, fmt.Errorf("failed to rotate segment during batch write: %w", rotateErr)
@@ -566,22 +571,6 @@ func (wl *WALog) SegmentForIndex(idx uint64) (SegmentID, int, error) {
 		slot := int(idx - r.firstIndex)
 		return r.id, slot, nil
 	}
-
-	// Fallback: check current segment explicitly.
-	// The current segment might have grown since ensureSegmentRangesLocked was called
-	// (because we don't update ranges on every write).
-	if wl.currentSegment != nil {
-		first := wl.currentSegment.FirstLogIndex()
-		if first > 0 {
-			count := wl.currentSegment.GetEntryCount()
-			high := first + uint64(count)
-			if idx >= first && idx < high {
-				slot := int(idx - first)
-				return wl.currentSegment.ID(), slot, nil
-			}
-		}
-	}
-
 	return 0, 0, fmt.Errorf("log index %d not found", idx)
 }
 
@@ -621,6 +610,157 @@ func (wl *WALog) rotateSegment() error {
 	wl.segmentRotated.Add(1)
 	wl.snapshotSegments()
 	wl.rotationCallback()
+	return nil
+}
+
+// Truncate truncates the WAL to the specified log index.
+// All entries after the given log index will be discarded.
+// If logIndex is 0, all segments are deleted and the WAL is reset.
+//
+// Users must ensure that reader creation and advancement are not interfering
+// with the truncation logic. Active readers on segments that need to be
+// deleted will cause the Truncate operation to fail.
+func (wl *WALog) Truncate(logIndex uint64) error {
+	wl.writeMu.Lock()
+	defer wl.writeMu.Unlock()
+
+	plan, err := wl.buildTruncatePlan(logIndex)
+	if err != nil {
+		return err
+	}
+
+	if logIndex == 0 && plan.hasActiveReaders {
+		return errors.New("cannot truncate WAL to 0 while active readers exist")
+	}
+
+	if err := wl.deleteSegments(plan.segmentsToDelete); err != nil {
+		return err
+	}
+
+	if logIndex == 0 {
+		return wl.resetAfterFullTruncate(plan.segmentToTruncate)
+	}
+
+	if plan.segmentToTruncate != 0 {
+		seg := wl.segments[plan.segmentToTruncate]
+		if err := seg.TruncateTo(logIndex); err != nil {
+			return fmt.Errorf("failed to truncate segment %d: %w", plan.segmentToTruncate, err)
+		}
+		wl.currentSegment = seg
+	} else if len(wl.segments) == 0 {
+		seg, err := wl.openSegment(1)
+		if err != nil {
+			return fmt.Errorf("failed to create initial segment after truncate: %w", err)
+		}
+		wl.segments[1] = seg
+		wl.currentSegment = seg
+		wl.snapshotSegments()
+		return nil
+	}
+
+	wl.ensureSegmentRangesLocked()
+	wl.snapshotSegments()
+
+	return nil
+}
+
+type truncatePlan struct {
+	segmentsToDelete  []SegmentID
+	segmentToTruncate SegmentID
+	earliestIndex     uint64
+	haveEarliest      bool
+	hasActiveReaders  bool
+}
+
+func (wl *WALog) buildTruncatePlan(logIndex uint64) (truncatePlan, error) {
+	var plan truncatePlan
+
+	for id, seg := range wl.segments {
+		if seg.HasActiveReaders() {
+			plan.hasActiveReaders = true
+		}
+
+		first := seg.FirstLogIndex()
+		if first > 0 && (!plan.haveEarliest || first < plan.earliestIndex) {
+			plan.earliestIndex = first
+			plan.haveEarliest = true
+		}
+
+		if first > logIndex {
+			plan.segmentsToDelete = append(plan.segmentsToDelete, id)
+			continue
+		}
+
+		if plan.segmentToTruncate == 0 || first > wl.segments[plan.segmentToTruncate].FirstLogIndex() {
+			plan.segmentToTruncate = id
+		}
+	}
+
+	if logIndex > 0 && plan.haveEarliest && logIndex < plan.earliestIndex {
+		return plan, fmt.Errorf("truncate index %d is before earliest segment index %d", logIndex, plan.earliestIndex)
+	}
+
+	// active readers on deletion candidates ?
+	for _, id := range plan.segmentsToDelete {
+		seg := wl.segments[id]
+		if seg.HasActiveReaders() {
+			return plan, fmt.Errorf("cannot delete segment %d: has active readers", id)
+		}
+	}
+
+	// active readers on target segment ONLY if fully deleting ?
+	if plan.segmentToTruncate != 0 {
+		seg := wl.segments[plan.segmentToTruncate]
+		if logIndex == 0 {
+			if seg.HasActiveReaders() {
+				return plan, fmt.Errorf("cannot delete segment %d: has active readers", plan.segmentToTruncate)
+			}
+		}
+	}
+
+	return plan, nil
+}
+
+func (wl *WALog) deleteSegments(ids []SegmentID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	for _, id := range ids {
+		seg := wl.segments[id]
+		if err := seg.Remove(); err != nil {
+			return fmt.Errorf("failed to remove segment %d: %w", id, err)
+		}
+		delete(wl.segments, id)
+		if wl.currentSegment != nil && wl.currentSegment.ID() == id {
+			wl.currentSegment = nil
+		}
+	}
+	return nil
+}
+
+func (wl *WALog) resetAfterFullTruncate(segmentToTruncate SegmentID) error {
+	if segmentToTruncate != 0 {
+		seg := wl.segments[segmentToTruncate]
+		if err := seg.Remove(); err != nil {
+			return fmt.Errorf("failed to remove segment %d: %w", segmentToTruncate, err)
+		}
+		delete(wl.segments, segmentToTruncate)
+		if wl.currentSegment != nil && wl.currentSegment.ID() == segmentToTruncate {
+			wl.currentSegment = nil
+		}
+	}
+
+	wl.segmentRanges = nil
+	wl.snapshotSegments()
+
+	seg, err := wl.openSegment(1)
+	if err != nil {
+		return fmt.Errorf("failed to create initial segment after truncate: %w", err)
+	}
+	wl.segments[1] = seg
+	wl.currentSegment = seg
+	wl.snapshotSegments()
 	return nil
 }
 
@@ -882,6 +1022,7 @@ func (wl *WALog) MarkSegmentsForDeletion() {
 		}
 		if _, alreadyQueued := wl.pendingDeletion[seg.ID()]; !alreadyQueued {
 			wl.pendingDeletion[seg.ID()] = seg
+			seg.MarkForDeletion()
 			segmentsToDelete--
 		}
 	}
