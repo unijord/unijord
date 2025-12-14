@@ -1,72 +1,79 @@
 namespace raft;
 
+// Command types for Raft FSM
 enum CommandType:byte {
   UNKNOWN = 0,
-  APPEND_DATA = 1,
+  APPEND = 1,
   SEGMENT_SEALED = 2,
   SEGMENT_UPLOADED = 3,
-  SEGMENT_PARQUET_COMMITTED = 4,
+  SEGMENT_REASSIGNED = 4,
 }
 
-enum SegmentState:byte {
-  ACTIVE = 0,
-  PENDING_UPLOAD = 1,
-  UPLOADED = 2,
-  PARQUET_COMMITTED = 3,
-}
-
+// Segment sealed
 table SegmentSealedCommand {
-  shard_id: string;
   segment_id: uint;
   first_index: ulong;
   last_index: ulong;
+  byte_size: ulong;
+  entry_count: ulong;
+  // microseconds
+  sealed_at: ulong;
+  assigned_to: ubyte;
+  sealed_term: ulong;
 }
 
-table SegmentUploadedCommand {
-  shard_id: string;
-  segment_id: uint;
-  object_bucket: string;
+
+table ParquetFileInfo {
+  // Schema ID this file was written with
+  schema_id: uint;
+  // Object storage key
   object_key: string;
-  object_size_bytes: ulong;
-  object_checksum: string;
+  size_bytes: ulong;
+  row_count: ulong;
+  checksum: string;
 }
 
-table SegmentParquetCommittedCommand {
-  shard_id: string;
+// Parquet upload complete
+table SegmentUploadedCommand {
   segment_id: uint;
-  parquet_files: [string];
-  iceberg_table: string;       
-  iceberg_snapshot_id: ulong;
+  // Bucket for all files
+  object_bucket: string;
+   // One file per schema_id encountered
+  files: [ParquetFileInfo];
+  total_rows: ulong;
+  // microseconds
+  uploaded_at: ulong;
+  uploaded_by: string;
 }
 
+// Leader should reassigns a stalled segment to a different node
+table SegmentReassignedCommand {
+  segment_id: uint;
+  previous_node: ubyte;
+  new_node: ubyte;
+  reassigned_at: ulong;
+  reason: string;
+}
+
+// Union lifecycle commands
 union CommandPayload {
   SegmentSealedCommand,
   SegmentUploadedCommand,
-  SegmentParquetCommittedCommand,
+  SegmentReassignedCommand,
 }
 
+// Raft command wrapper
 table RaftCommand {
   type: CommandType;
 
-  // For APPEND_DATA; opaque application payload.
-  data: [ubyte];
+  // For APPEND: length-prefixed concatenated WalEntry bytes
+  // Format: [4-byte len][entry1][4-byte len][entry2]...
+  batch_data: [ubyte];
+  // Number of entries in batch
+  batch_size: uint;
 
-  // For SEGMENT_* commands; Raft FSM interprets this union based on 'type'.
+  // SEGMENT_* commands
   payload: CommandPayload;
-}
-
-// we will use this as the local snapshot
-table SegmentStateEntry {
-  segment_id: uint;
-  state: SegmentState;
-}
-
-table SegmentStateSnapshot {
-  shard_id: string;
-  segments: [SegmentStateEntry];
-
-  last_applied_index: ulong;
-  last_applied_term: ulong;
 }
 
 root_type RaftCommand;

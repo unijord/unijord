@@ -1,0 +1,32 @@
+namespace ingest;
+
+// Compression for event payload
+enum CompressionType:byte {
+  NONE = 0,
+  SNAPPY = 1,
+  ZSTD = 2,
+}
+
+// Key-value pair for event metadata
+table KeyValue {
+  key: string;
+  value: [ubyte];
+}
+
+// WAL entry - stored in Raft log
+// Maps from proto Event
+table WalEntry {
+  event_id: [ubyte];
+  event_type: string;
+  // Microseconds since epoch
+  occurred_at: uint64;
+  // Event payload
+  payload: [ubyte];
+  compression: CompressionType;
+  // Schema registry reference for deserialization
+  schema_id: uint32;
+  // Custom metadata for partition derivation
+  metadata: [KeyValue];
+}
+
+root_type WalEntry;
