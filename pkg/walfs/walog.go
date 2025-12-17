@@ -28,6 +28,14 @@ var (
 // DeletionPredicate is a function that determines if a segment ID is safe to delete.
 type DeletionPredicate func(segID SegmentID) bool
 
+// RotatedSegmentInfo contains information about a segment that was sealed during rotation.
+type RotatedSegmentInfo struct {
+	SegmentID     SegmentID
+	FirstLogIndex uint64
+	EntryCount    int64
+	ByteSize      int64
+}
+
 type WALogOptions func(*WALog)
 
 // DirectorySyncer syncs a directory path to stable storage.
@@ -69,7 +77,9 @@ func WithMSyncEveryWrite(enabled bool) WALogOptions {
 }
 
 // WithOnSegmentRotated registers a fn callback function that will be called immediately after a WAL segment is rotated.
-func WithOnSegmentRotated(fn func()) WALogOptions {
+// The callback receives information about the sealed segment.
+// IMP: Don't block callback else write will be stalled.
+func WithOnSegmentRotated(fn func(info RotatedSegmentInfo)) WALogOptions {
 	return func(sm *WALog) {
 		if fn != nil {
 			sm.rotationCallback = fn
@@ -129,7 +139,7 @@ type WALog struct {
 	forceSyncEveryWrite MsyncOption
 	bytesPerSyncCalled  atomic.Int64
 	segmentRotated      atomic.Int64
-	rotationCallback    func()
+	rotationCallback    func(RotatedSegmentInfo)
 
 	// this mutex is used in the write path.
 	// it protects the writer path.
@@ -198,7 +208,7 @@ func NewWALog(dir string, ext string, opts ...WALogOptions) (*WALog, error) {
 		maxSegmentsToRetain: 0,
 		enableAutoCleanup:   false,
 		pendingDeletion:     make(map[SegmentID]*Segment),
-		rotationCallback:    func() {},
+		rotationCallback:    func(RotatedSegmentInfo) {},
 		dirSyncer:           DirectorySyncFunc(syncDir),
 	}
 
@@ -582,7 +592,17 @@ func (wl *WALog) RotateSegment() error {
 }
 
 func (wl *WALog) rotateSegment() error {
+	var sealedInfo RotatedSegmentInfo
+
 	if wl.currentSegment != nil && !IsSealed(wl.currentSegment.GetFlags()) {
+		// info about the segment being sealed before sealing
+		sealedInfo = RotatedSegmentInfo{
+			SegmentID:     wl.currentSegment.ID(),
+			FirstLogIndex: wl.currentSegment.FirstLogIndex(),
+			EntryCount:    wl.currentSegment.GetEntryCount(),
+			ByteSize:      wl.currentSegment.WriteOffset(),
+		}
+
 		if err := wl.currentSegment.SealSegment(); err != nil {
 			return fmt.Errorf("failed to seal current segment: %w", err)
 		}
@@ -609,7 +629,12 @@ func (wl *WALog) rotateSegment() error {
 	wl.bytesPerSyncCalled.Store(0)
 	wl.segmentRotated.Add(1)
 	wl.snapshotSegments()
-	wl.rotationCallback()
+
+	// invoke callback if we actually sealed a segment
+	if sealedInfo.SegmentID > 0 {
+		wl.rotationCallback(sealedInfo)
+	}
+
 	return nil
 }
 
