@@ -18,7 +18,8 @@ table SegmentSealedCommand {
   entry_count: ulong;
   // microseconds
   sealed_at: ulong;
-  assigned_to: ubyte;
+  // Raft ServerID (e.g., "node-1", "node-2")
+  assigned_to: string;
   sealed_term: ulong;
 }
 
@@ -46,11 +47,13 @@ table SegmentUploadedCommand {
   uploaded_by: string;
 }
 
-// Leader should reassigns a stalled segment to a different node
+// Leader reassigns a stalled segment to a different node
 table SegmentReassignedCommand {
   segment_id: uint;
-  previous_node: ubyte;
-  new_node: ubyte;
+  // Raft ServerID of previous assignee
+  previous_node: string;
+  // Raft ServerID of new assignee
+  new_node: string;
   reassigned_at: ulong;
   reason: string;
 }
