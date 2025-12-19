@@ -1057,6 +1057,17 @@ func (seg *Segment) GetLastModifiedAt() int64 {
 	return meta.LastModifiedAt
 }
 
+// GetCreatedAt returns the creation timestamp of the segment in nanoseconds.
+func (seg *Segment) GetCreatedAt() int64 {
+	seg.writeMu.RLock()
+	defer seg.writeMu.RUnlock()
+	meta, err := decodeSegmentHeader(seg.mmapData[:segmentHeaderSize])
+	if err != nil {
+		panic(err)
+	}
+	return meta.CreatedAt
+}
+
 // GetEntryCount returns the total entry count in segment.
 func (seg *Segment) GetEntryCount() int64 {
 	seg.writeMu.RLock()
