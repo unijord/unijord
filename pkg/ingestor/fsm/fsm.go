@@ -160,6 +160,9 @@ func (f *FSM) Apply(log *raft.Log) interface{} {
 	case raftfb.CommandTypeSEGMENT_REASSIGNED:
 		return f.applySegmentReassigned(cmd)
 
+	case raftfb.CommandTypeSEGMENT_FAILED:
+		return f.applySegmentFailed(cmd)
+
 	case raftfb.CommandTypeAPPEND:
 		// NOOP we maintain this through the reader.
 		return nil
@@ -367,6 +370,7 @@ func (f *FSM) applySegmentReassigned(cmd *raftfb.RaftCommand) interface{} {
 		}
 
 		record.AssignedTo = newNode
+		record.AttemptCount++
 		updatedRecord = record
 
 		return b.Put(key, record.Encode())
@@ -384,9 +388,84 @@ func (f *FSM) applySegmentReassigned(cmd *raftfb.RaftCommand) interface{} {
 			"segment_id", segmentID,
 			"previous_node", previousNode,
 			"new_node", newNode,
-			"reason", reason)
+			"reason", reason,
+			"attempt_count", updatedRecord.AttemptCount)
 
 		f.notifyCallbacks(segmentID, StateSealed, updatedRecord)
+	}
+
+	return nil
+}
+
+// applySegmentFailed handles SEGMENT_FAILED command.
+func (f *FSM) applySegmentFailed(cmd *raftfb.RaftCommand) interface{} {
+	var table flatbuffers.Table
+	if !cmd.Payload(&table) {
+		f.logger.Error("failed to get payload from SEGMENT_FAILED")
+		return fmt.Errorf("no payload in SEGMENT_FAILED")
+	}
+
+	var failed raftfb.SegmentFailedCommand
+	failed.Init(table.Bytes, table.Pos)
+
+	segmentID := failed.SegmentId()
+	reason := string(failed.Reason())
+	attemptCount := failed.AttemptCount()
+	lastAssignedTo := string(failed.LastAssignedTo())
+
+	var updatedRecord *SegmentRecord
+
+	err := f.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSegments)
+		key := EncodeUint32(segmentID)
+		existing := b.Get(key)
+		if existing == nil {
+			f.logger.Warn("SEGMENT_FAILED for unknown segment",
+				"segment_id", segmentID)
+			return nil
+		}
+
+		record := DecodeSegmentRecord(existing)
+		if record == nil {
+			return fmt.Errorf("failed to decode segment record")
+		}
+
+		if record.State == StateFailed {
+			f.logger.Debug("segment already failed, ignoring duplicate",
+				"segment_id", segmentID)
+			return nil
+		}
+
+		if record.State == StateUploaded {
+			f.logger.Debug("ignoring failure for already uploaded segment",
+				"segment_id", segmentID)
+			return nil
+		}
+
+		record.State = StateFailed
+		record.FailureReason = reason
+		record.AttemptCount = attemptCount
+		record.AssignedTo = lastAssignedTo
+		updatedRecord = record
+
+		return b.Put(key, record.Encode())
+	})
+
+	if err != nil {
+		f.logger.Error("failed to apply SEGMENT_FAILED",
+			"segment_id", segmentID,
+			"error", err)
+		return err
+	}
+
+	if updatedRecord != nil {
+		f.logger.Error("segment permanently failed",
+			"segment_id", segmentID,
+			"reason", reason,
+			"attempt_count", attemptCount,
+			"last_assigned_to", lastAssignedTo)
+
+		f.notifyCallbacks(segmentID, StateFailed, updatedRecord)
 	}
 
 	return nil

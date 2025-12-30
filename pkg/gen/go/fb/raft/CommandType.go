@@ -7,27 +7,30 @@ import "strconv"
 type CommandType int8
 
 const (
-	CommandTypeUNKNOWN                   CommandType = 0
-	CommandTypeAPPEND_DATA               CommandType = 1
-	CommandTypeSEGMENT_SEALED            CommandType = 2
-	CommandTypeSEGMENT_UPLOADED          CommandType = 3
-	CommandTypeSEGMENT_PARQUET_COMMITTED CommandType = 4
+	CommandTypeUNKNOWN            CommandType = 0
+	CommandTypeAPPEND             CommandType = 1
+	CommandTypeSEGMENT_SEALED     CommandType = 2
+	CommandTypeSEGMENT_UPLOADED   CommandType = 3
+	CommandTypeSEGMENT_REASSIGNED CommandType = 4
+	CommandTypeSEGMENT_FAILED     CommandType = 5
 )
 
 var EnumNamesCommandType = map[CommandType]string{
-	CommandTypeUNKNOWN:                   "UNKNOWN",
-	CommandTypeAPPEND_DATA:               "APPEND_DATA",
-	CommandTypeSEGMENT_SEALED:            "SEGMENT_SEALED",
-	CommandTypeSEGMENT_UPLOADED:          "SEGMENT_UPLOADED",
-	CommandTypeSEGMENT_PARQUET_COMMITTED: "SEGMENT_PARQUET_COMMITTED",
+	CommandTypeUNKNOWN:            "UNKNOWN",
+	CommandTypeAPPEND:             "APPEND",
+	CommandTypeSEGMENT_SEALED:     "SEGMENT_SEALED",
+	CommandTypeSEGMENT_UPLOADED:   "SEGMENT_UPLOADED",
+	CommandTypeSEGMENT_REASSIGNED: "SEGMENT_REASSIGNED",
+	CommandTypeSEGMENT_FAILED:     "SEGMENT_FAILED",
 }
 
 var EnumValuesCommandType = map[string]CommandType{
-	"UNKNOWN":                   CommandTypeUNKNOWN,
-	"APPEND_DATA":               CommandTypeAPPEND_DATA,
-	"SEGMENT_SEALED":            CommandTypeSEGMENT_SEALED,
-	"SEGMENT_UPLOADED":          CommandTypeSEGMENT_UPLOADED,
-	"SEGMENT_PARQUET_COMMITTED": CommandTypeSEGMENT_PARQUET_COMMITTED,
+	"UNKNOWN":            CommandTypeUNKNOWN,
+	"APPEND":             CommandTypeAPPEND,
+	"SEGMENT_SEALED":     CommandTypeSEGMENT_SEALED,
+	"SEGMENT_UPLOADED":   CommandTypeSEGMENT_UPLOADED,
+	"SEGMENT_REASSIGNED": CommandTypeSEGMENT_REASSIGNED,
+	"SEGMENT_FAILED":     CommandTypeSEGMENT_FAILED,
 }
 
 func (v CommandType) String() string {

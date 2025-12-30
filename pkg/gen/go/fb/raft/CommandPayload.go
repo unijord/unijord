@@ -2,29 +2,35 @@
 
 package raft
 
-import "strconv"
+import (
+	flatbuffers "github.com/google/flatbuffers/go"
+	"strconv"
+)
 
 type CommandPayload byte
 
 const (
-	CommandPayloadNONE                           CommandPayload = 0
-	CommandPayloadSegmentSealedCommand           CommandPayload = 1
-	CommandPayloadSegmentUploadedCommand         CommandPayload = 2
-	CommandPayloadSegmentParquetCommittedCommand CommandPayload = 3
+	CommandPayloadNONE                     CommandPayload = 0
+	CommandPayloadSegmentSealedCommand     CommandPayload = 1
+	CommandPayloadSegmentUploadedCommand   CommandPayload = 2
+	CommandPayloadSegmentReassignedCommand CommandPayload = 3
+	CommandPayloadSegmentFailedCommand     CommandPayload = 4
 )
 
 var EnumNamesCommandPayload = map[CommandPayload]string{
-	CommandPayloadNONE:                           "NONE",
-	CommandPayloadSegmentSealedCommand:           "SegmentSealedCommand",
-	CommandPayloadSegmentUploadedCommand:         "SegmentUploadedCommand",
-	CommandPayloadSegmentParquetCommittedCommand: "SegmentParquetCommittedCommand",
+	CommandPayloadNONE:                     "NONE",
+	CommandPayloadSegmentSealedCommand:     "SegmentSealedCommand",
+	CommandPayloadSegmentUploadedCommand:   "SegmentUploadedCommand",
+	CommandPayloadSegmentReassignedCommand: "SegmentReassignedCommand",
+	CommandPayloadSegmentFailedCommand:     "SegmentFailedCommand",
 }
 
 var EnumValuesCommandPayload = map[string]CommandPayload{
-	"NONE":                           CommandPayloadNONE,
-	"SegmentSealedCommand":           CommandPayloadSegmentSealedCommand,
-	"SegmentUploadedCommand":         CommandPayloadSegmentUploadedCommand,
-	"SegmentParquetCommittedCommand": CommandPayloadSegmentParquetCommittedCommand,
+	"NONE":                     CommandPayloadNONE,
+	"SegmentSealedCommand":     CommandPayloadSegmentSealedCommand,
+	"SegmentUploadedCommand":   CommandPayloadSegmentUploadedCommand,
+	"SegmentReassignedCommand": CommandPayloadSegmentReassignedCommand,
+	"SegmentFailedCommand":     CommandPayloadSegmentFailedCommand,
 }
 
 func (v CommandPayload) String() string {
@@ -32,4 +38,48 @@ func (v CommandPayload) String() string {
 		return s
 	}
 	return "CommandPayload(" + strconv.FormatInt(int64(v), 10) + ")"
+}
+
+type CommandPayloadT struct {
+	Type CommandPayload
+	Value interface{}
+}
+
+func (t *CommandPayloadT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	if t == nil {
+		return 0
+	}
+	switch t.Type {
+	case CommandPayloadSegmentSealedCommand:
+		return t.Value.(*SegmentSealedCommandT).Pack(builder)
+	case CommandPayloadSegmentUploadedCommand:
+		return t.Value.(*SegmentUploadedCommandT).Pack(builder)
+	case CommandPayloadSegmentReassignedCommand:
+		return t.Value.(*SegmentReassignedCommandT).Pack(builder)
+	case CommandPayloadSegmentFailedCommand:
+		return t.Value.(*SegmentFailedCommandT).Pack(builder)
+	}
+	return 0
+}
+
+func (rcv CommandPayload) UnPack(table flatbuffers.Table) *CommandPayloadT {
+	switch rcv {
+	case CommandPayloadSegmentSealedCommand:
+		var x SegmentSealedCommand
+		x.Init(table.Bytes, table.Pos)
+		return &CommandPayloadT{Type: CommandPayloadSegmentSealedCommand, Value: x.UnPack()}
+	case CommandPayloadSegmentUploadedCommand:
+		var x SegmentUploadedCommand
+		x.Init(table.Bytes, table.Pos)
+		return &CommandPayloadT{Type: CommandPayloadSegmentUploadedCommand, Value: x.UnPack()}
+	case CommandPayloadSegmentReassignedCommand:
+		var x SegmentReassignedCommand
+		x.Init(table.Bytes, table.Pos)
+		return &CommandPayloadT{Type: CommandPayloadSegmentReassignedCommand, Value: x.UnPack()}
+	case CommandPayloadSegmentFailedCommand:
+		var x SegmentFailedCommand
+		x.Init(table.Bytes, table.Pos)
+		return &CommandPayloadT{Type: CommandPayloadSegmentFailedCommand, Value: x.UnPack()}
+	}
+	return nil
 }

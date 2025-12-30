@@ -87,7 +87,7 @@ func TestCryptoFuncs_OutputLength(t *testing.T) {
 	if xxhashLen > 16 {
 		t.Errorf("xxhash output too long: got %d chars, want <= 16", xxhashLen)
 	}
-	
+
 	ast2, _ := env.Compile("sha256(s)")
 	prog2, _ := env.Program(ast2)
 	out2, _, _ := prog2.Eval(map[string]any{"s": "test"})

@@ -228,6 +228,40 @@ func (cb *Builder) BuildSegmentReassigned(
 	return result
 }
 
+// BuildSegmentFailed creates a SEGMENT_FAILED command.
+func (cb *Builder) BuildSegmentFailed(
+	segmentID uint32,
+	reason string,
+	attemptCount uint32,
+	lastAssignedTo string,
+) []byte {
+	builder := cb.getBuilder()
+	defer cb.putBuilder(builder)
+
+	reasonOffset := builder.CreateString(reason)
+	lastAssignedToOffset := builder.CreateString(lastAssignedTo)
+
+	raftfb.SegmentFailedCommandStart(builder)
+	raftfb.SegmentFailedCommandAddSegmentId(builder, segmentID)
+	raftfb.SegmentFailedCommandAddFailedAt(builder, uint64(time.Now().UnixMicro()))
+	raftfb.SegmentFailedCommandAddReason(builder, reasonOffset)
+	raftfb.SegmentFailedCommandAddAttemptCount(builder, attemptCount)
+	raftfb.SegmentFailedCommandAddLastAssignedTo(builder, lastAssignedToOffset)
+	failedCmd := raftfb.SegmentFailedCommandEnd(builder)
+
+	raftfb.RaftCommandStart(builder)
+	raftfb.RaftCommandAddType(builder, raftfb.CommandTypeSEGMENT_FAILED)
+	raftfb.RaftCommandAddPayloadType(builder, raftfb.CommandPayloadSegmentFailedCommand)
+	raftfb.RaftCommandAddPayload(builder, failedCmd)
+	cmd := raftfb.RaftCommandEnd(builder)
+
+	builder.Finish(cmd)
+	data := builder.FinishedBytes()
+	result := make([]byte, len(data))
+	copy(result, data)
+	return result
+}
+
 // DecodeBatchData decodes length-prefixed batch data into individual events.
 func DecodeBatchData(batchData []byte, batchSize uint32) [][]byte {
 	events := make([][]byte, 0, batchSize)

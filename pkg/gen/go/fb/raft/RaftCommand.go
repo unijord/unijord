@@ -6,6 +6,53 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
+type RaftCommandT struct {
+	Type CommandType `json:"type"`
+	BatchData []byte `json:"batch_data"`
+	BatchSize uint32 `json:"batch_size"`
+	Payload *CommandPayloadT `json:"payload"`
+}
+
+func (t *RaftCommandT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	if t == nil {
+		return 0
+	}
+	batchDataOffset := flatbuffers.UOffsetT(0)
+	if t.BatchData != nil {
+		batchDataOffset = builder.CreateByteString(t.BatchData)
+	}
+	payloadOffset := t.Payload.Pack(builder)
+
+	RaftCommandStart(builder)
+	RaftCommandAddType(builder, t.Type)
+	RaftCommandAddBatchData(builder, batchDataOffset)
+	RaftCommandAddBatchSize(builder, t.BatchSize)
+	if t.Payload != nil {
+		RaftCommandAddPayloadType(builder, t.Payload.Type)
+	}
+	RaftCommandAddPayload(builder, payloadOffset)
+	return RaftCommandEnd(builder)
+}
+
+func (rcv *RaftCommand) UnPackTo(t *RaftCommandT) {
+	t.Type = rcv.Type()
+	t.BatchData = rcv.BatchDataBytes()
+	t.BatchSize = rcv.BatchSize()
+	payloadTable := flatbuffers.Table{}
+	if rcv.Payload(&payloadTable) {
+		t.Payload = rcv.PayloadType().UnPack(payloadTable)
+	}
+}
+
+func (rcv *RaftCommand) UnPack() *RaftCommandT {
+	if rcv == nil {
+		return nil
+	}
+	t := &RaftCommandT{}
+	rcv.UnPackTo(t)
+	return t
+}
+
 type RaftCommand struct {
 	_tab flatbuffers.Table
 }
@@ -53,7 +100,7 @@ func (rcv *RaftCommand) MutateType(n CommandType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
 
-func (rcv *RaftCommand) Data(j int) byte {
+func (rcv *RaftCommand) BatchData(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -62,7 +109,7 @@ func (rcv *RaftCommand) Data(j int) byte {
 	return 0
 }
 
-func (rcv *RaftCommand) DataLength() int {
+func (rcv *RaftCommand) BatchDataLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -70,7 +117,7 @@ func (rcv *RaftCommand) DataLength() int {
 	return 0
 }
 
-func (rcv *RaftCommand) DataBytes() []byte {
+func (rcv *RaftCommand) BatchDataBytes() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -78,7 +125,7 @@ func (rcv *RaftCommand) DataBytes() []byte {
 	return nil
 }
 
-func (rcv *RaftCommand) MutateData(j int, n byte) bool {
+func (rcv *RaftCommand) MutateBatchData(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -87,8 +134,20 @@ func (rcv *RaftCommand) MutateData(j int, n byte) bool {
 	return false
 }
 
-func (rcv *RaftCommand) PayloadType() CommandPayload {
+func (rcv *RaftCommand) BatchSize() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *RaftCommand) MutateBatchSize(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(8, n)
+}
+
+func (rcv *RaftCommand) PayloadType() CommandPayload {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return CommandPayload(rcv._tab.GetByte(o + rcv._tab.Pos))
 	}
@@ -96,11 +155,11 @@ func (rcv *RaftCommand) PayloadType() CommandPayload {
 }
 
 func (rcv *RaftCommand) MutatePayloadType(n CommandPayload) bool {
-	return rcv._tab.MutateByteSlot(8, byte(n))
+	return rcv._tab.MutateByteSlot(10, byte(n))
 }
 
 func (rcv *RaftCommand) Payload(obj *flatbuffers.Table) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		rcv._tab.Union(obj, o)
 		return true
@@ -109,22 +168,25 @@ func (rcv *RaftCommand) Payload(obj *flatbuffers.Table) bool {
 }
 
 func RaftCommandStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(5)
 }
 func RaftCommandAddType(builder *flatbuffers.Builder, type_ CommandType) {
 	builder.PrependInt8Slot(0, int8(type_), 0)
 }
-func RaftCommandAddData(builder *flatbuffers.Builder, data flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(data), 0)
+func RaftCommandAddBatchData(builder *flatbuffers.Builder, batchData flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(batchData), 0)
 }
-func RaftCommandStartDataVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func RaftCommandStartBatchDataVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
+func RaftCommandAddBatchSize(builder *flatbuffers.Builder, batchSize uint32) {
+	builder.PrependUint32Slot(2, batchSize, 0)
+}
 func RaftCommandAddPayloadType(builder *flatbuffers.Builder, payloadType CommandPayload) {
-	builder.PrependByteSlot(2, byte(payloadType), 0)
+	builder.PrependByteSlot(3, byte(payloadType), 0)
 }
 func RaftCommandAddPayload(builder *flatbuffers.Builder, payload flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(payload), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(payload), 0)
 }
 func RaftCommandEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

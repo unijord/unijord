@@ -2,8 +2,6 @@ package schema
 
 import (
 	"testing"
-
-	celLib "github.com/unijord/unijord/pkg/cel"
 )
 
 var nestedSchema = `{
@@ -161,12 +159,14 @@ func TestTypeProvider_RuntimeEval(t *testing.T) {
 	provider := NewTypeProvider()
 	env, _, _ := BuildTypedEnv(adapter, provider, DefaultEnvOptions())
 
-	compiler := celLib.NewCompiler(env)
-	evaluator := celLib.NewEvaluator()
+	ast, issues := env.Compile("event.customer.address.geo.lat > 40.0 && event.items.size() > 0")
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("Compile error: %v", issues.Err())
+	}
 
-	expr, err := compiler.CompileBool("event.customer.address.geo.lat > 40.0 && event.items.size() > 0")
+	prog, err := env.Program(ast)
 	if err != nil {
-		t.Fatalf("Compile error: %v", err)
+		t.Fatalf("Program error: %v", err)
 	}
 
 	data := map[string]any{
@@ -191,9 +191,13 @@ func TestTypeProvider_RuntimeEval(t *testing.T) {
 		},
 	}
 
-	result, err := evaluator.EvalBool(expr, data)
+	out, _, err := prog.Eval(data)
 	if err != nil {
 		t.Fatalf("Eval error: %v", err)
+	}
+	result, ok := out.Value().(bool)
+	if !ok {
+		t.Fatalf("expected bool, got %T", out.Value())
 	}
 	if !result {
 		t.Error("expected true")
@@ -220,9 +224,8 @@ func BenchmarkTypedEnv_Eval(b *testing.B) {
 	provider := NewTypeProvider()
 	env, _, _ := BuildTypedEnv(adapter, provider, DefaultEnvOptions())
 
-	compiler := celLib.NewCompiler(env)
-	evaluator := celLib.NewEvaluator()
-	expr, _ := compiler.CompileBool("event.customer.address.geo.lat > 40.0 && event.customer.age > 18")
+	ast, _ := env.Compile("event.customer.address.geo.lat > 40.0 && event.customer.age > 18")
+	prog, _ := env.Program(ast)
 
 	data := map[string]any{
 		"event": map[string]any{
@@ -237,6 +240,6 @@ func BenchmarkTypedEnv_Eval(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		evaluator.EvalBool(expr, data)
+		prog.Eval(data)
 	}
 }

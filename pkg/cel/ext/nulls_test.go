@@ -173,7 +173,7 @@ func TestNullFuncsWithTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEnv: %v", err)
 	}
-	
+
 	tests := []struct {
 		name     string
 		expr     string

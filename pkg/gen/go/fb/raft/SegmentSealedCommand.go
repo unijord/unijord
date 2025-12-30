@@ -6,6 +6,57 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
+type SegmentSealedCommandT struct {
+	SegmentId uint32 `json:"segment_id"`
+	FirstIndex uint64 `json:"first_index"`
+	LastIndex uint64 `json:"last_index"`
+	ByteSize uint64 `json:"byte_size"`
+	EntryCount uint64 `json:"entry_count"`
+	SealedAt uint64 `json:"sealed_at"`
+	AssignedTo string `json:"assigned_to"`
+	SealedTerm uint64 `json:"sealed_term"`
+}
+
+func (t *SegmentSealedCommandT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	if t == nil {
+		return 0
+	}
+	assignedToOffset := flatbuffers.UOffsetT(0)
+	if t.AssignedTo != "" {
+		assignedToOffset = builder.CreateString(t.AssignedTo)
+	}
+	SegmentSealedCommandStart(builder)
+	SegmentSealedCommandAddSegmentId(builder, t.SegmentId)
+	SegmentSealedCommandAddFirstIndex(builder, t.FirstIndex)
+	SegmentSealedCommandAddLastIndex(builder, t.LastIndex)
+	SegmentSealedCommandAddByteSize(builder, t.ByteSize)
+	SegmentSealedCommandAddEntryCount(builder, t.EntryCount)
+	SegmentSealedCommandAddSealedAt(builder, t.SealedAt)
+	SegmentSealedCommandAddAssignedTo(builder, assignedToOffset)
+	SegmentSealedCommandAddSealedTerm(builder, t.SealedTerm)
+	return SegmentSealedCommandEnd(builder)
+}
+
+func (rcv *SegmentSealedCommand) UnPackTo(t *SegmentSealedCommandT) {
+	t.SegmentId = rcv.SegmentId()
+	t.FirstIndex = rcv.FirstIndex()
+	t.LastIndex = rcv.LastIndex()
+	t.ByteSize = rcv.ByteSize()
+	t.EntryCount = rcv.EntryCount()
+	t.SealedAt = rcv.SealedAt()
+	t.AssignedTo = string(rcv.AssignedTo())
+	t.SealedTerm = rcv.SealedTerm()
+}
+
+func (rcv *SegmentSealedCommand) UnPack() *SegmentSealedCommandT {
+	if rcv == nil {
+		return nil
+	}
+	t := &SegmentSealedCommandT{}
+	rcv.UnPackTo(t)
+	return t
+}
+
 type SegmentSealedCommand struct {
 	_tab flatbuffers.Table
 }
@@ -41,16 +92,8 @@ func (rcv *SegmentSealedCommand) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *SegmentSealedCommand) ShardId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func (rcv *SegmentSealedCommand) SegmentId() uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
 	}
@@ -58,11 +101,11 @@ func (rcv *SegmentSealedCommand) SegmentId() uint32 {
 }
 
 func (rcv *SegmentSealedCommand) MutateSegmentId(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(6, n)
+	return rcv._tab.MutateUint32Slot(4, n)
 }
 
 func (rcv *SegmentSealedCommand) FirstIndex() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -70,11 +113,11 @@ func (rcv *SegmentSealedCommand) FirstIndex() uint64 {
 }
 
 func (rcv *SegmentSealedCommand) MutateFirstIndex(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(8, n)
+	return rcv._tab.MutateUint64Slot(6, n)
 }
 
 func (rcv *SegmentSealedCommand) LastIndex() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -82,23 +125,91 @@ func (rcv *SegmentSealedCommand) LastIndex() uint64 {
 }
 
 func (rcv *SegmentSealedCommand) MutateLastIndex(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(8, n)
+}
+
+func (rcv *SegmentSealedCommand) ByteSize() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SegmentSealedCommand) MutateByteSize(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(10, n)
 }
 
-func SegmentSealedCommandStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+func (rcv *SegmentSealedCommand) EntryCount() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
 }
-func SegmentSealedCommandAddShardId(builder *flatbuffers.Builder, shardId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(shardId), 0)
+
+func (rcv *SegmentSealedCommand) MutateEntryCount(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(12, n)
+}
+
+func (rcv *SegmentSealedCommand) SealedAt() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SegmentSealedCommand) MutateSealedAt(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(14, n)
+}
+
+func (rcv *SegmentSealedCommand) AssignedTo() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *SegmentSealedCommand) SealedTerm() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *SegmentSealedCommand) MutateSealedTerm(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(18, n)
+}
+
+func SegmentSealedCommandStart(builder *flatbuffers.Builder) {
+	builder.StartObject(8)
 }
 func SegmentSealedCommandAddSegmentId(builder *flatbuffers.Builder, segmentId uint32) {
-	builder.PrependUint32Slot(1, segmentId, 0)
+	builder.PrependUint32Slot(0, segmentId, 0)
 }
 func SegmentSealedCommandAddFirstIndex(builder *flatbuffers.Builder, firstIndex uint64) {
-	builder.PrependUint64Slot(2, firstIndex, 0)
+	builder.PrependUint64Slot(1, firstIndex, 0)
 }
 func SegmentSealedCommandAddLastIndex(builder *flatbuffers.Builder, lastIndex uint64) {
-	builder.PrependUint64Slot(3, lastIndex, 0)
+	builder.PrependUint64Slot(2, lastIndex, 0)
+}
+func SegmentSealedCommandAddByteSize(builder *flatbuffers.Builder, byteSize uint64) {
+	builder.PrependUint64Slot(3, byteSize, 0)
+}
+func SegmentSealedCommandAddEntryCount(builder *flatbuffers.Builder, entryCount uint64) {
+	builder.PrependUint64Slot(4, entryCount, 0)
+}
+func SegmentSealedCommandAddSealedAt(builder *flatbuffers.Builder, sealedAt uint64) {
+	builder.PrependUint64Slot(5, sealedAt, 0)
+}
+func SegmentSealedCommandAddAssignedTo(builder *flatbuffers.Builder, assignedTo flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(assignedTo), 0)
+}
+func SegmentSealedCommandAddSealedTerm(builder *flatbuffers.Builder, sealedTerm uint64) {
+	builder.PrependUint64Slot(7, sealedTerm, 0)
 }
 func SegmentSealedCommandEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -6,6 +6,74 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
+type SegmentUploadedCommandT struct {
+	SegmentId uint32 `json:"segment_id"`
+	ObjectBucket string `json:"object_bucket"`
+	Files []*ParquetFileInfoT `json:"files"`
+	TotalRows uint64 `json:"total_rows"`
+	UploadedAt uint64 `json:"uploaded_at"`
+	UploadedBy string `json:"uploaded_by"`
+}
+
+func (t *SegmentUploadedCommandT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	if t == nil {
+		return 0
+	}
+	objectBucketOffset := flatbuffers.UOffsetT(0)
+	if t.ObjectBucket != "" {
+		objectBucketOffset = builder.CreateString(t.ObjectBucket)
+	}
+	filesOffset := flatbuffers.UOffsetT(0)
+	if t.Files != nil {
+		filesLength := len(t.Files)
+		filesOffsets := make([]flatbuffers.UOffsetT, filesLength)
+		for j := 0; j < filesLength; j++ {
+			filesOffsets[j] = t.Files[j].Pack(builder)
+		}
+		SegmentUploadedCommandStartFilesVector(builder, filesLength)
+		for j := filesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(filesOffsets[j])
+		}
+		filesOffset = builder.EndVector(filesLength)
+	}
+	uploadedByOffset := flatbuffers.UOffsetT(0)
+	if t.UploadedBy != "" {
+		uploadedByOffset = builder.CreateString(t.UploadedBy)
+	}
+	SegmentUploadedCommandStart(builder)
+	SegmentUploadedCommandAddSegmentId(builder, t.SegmentId)
+	SegmentUploadedCommandAddObjectBucket(builder, objectBucketOffset)
+	SegmentUploadedCommandAddFiles(builder, filesOffset)
+	SegmentUploadedCommandAddTotalRows(builder, t.TotalRows)
+	SegmentUploadedCommandAddUploadedAt(builder, t.UploadedAt)
+	SegmentUploadedCommandAddUploadedBy(builder, uploadedByOffset)
+	return SegmentUploadedCommandEnd(builder)
+}
+
+func (rcv *SegmentUploadedCommand) UnPackTo(t *SegmentUploadedCommandT) {
+	t.SegmentId = rcv.SegmentId()
+	t.ObjectBucket = string(rcv.ObjectBucket())
+	filesLength := rcv.FilesLength()
+	t.Files = make([]*ParquetFileInfoT, filesLength)
+	for j := 0; j < filesLength; j++ {
+		x := ParquetFileInfo{}
+		rcv.Files(&x, j)
+		t.Files[j] = x.UnPack()
+	}
+	t.TotalRows = rcv.TotalRows()
+	t.UploadedAt = rcv.UploadedAt()
+	t.UploadedBy = string(rcv.UploadedBy())
+}
+
+func (rcv *SegmentUploadedCommand) UnPack() *SegmentUploadedCommandT {
+	if rcv == nil {
+		return nil
+	}
+	t := &SegmentUploadedCommandT{}
+	rcv.UnPackTo(t)
+	return t
+}
+
 type SegmentUploadedCommand struct {
 	_tab flatbuffers.Table
 }
@@ -41,16 +109,8 @@ func (rcv *SegmentUploadedCommand) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *SegmentUploadedCommand) ShardId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func (rcv *SegmentUploadedCommand) SegmentId() uint32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint32(o + rcv._tab.Pos)
 	}
@@ -58,26 +118,50 @@ func (rcv *SegmentUploadedCommand) SegmentId() uint32 {
 }
 
 func (rcv *SegmentUploadedCommand) MutateSegmentId(n uint32) bool {
-	return rcv._tab.MutateUint32Slot(6, n)
+	return rcv._tab.MutateUint32Slot(4, n)
 }
 
 func (rcv *SegmentUploadedCommand) ObjectBucket() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *SegmentUploadedCommand) Files(obj *ParquetFileInfo, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
 	}
-	return nil
+	return false
 }
 
-func (rcv *SegmentUploadedCommand) ObjectKey() []byte {
+func (rcv *SegmentUploadedCommand) FilesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *SegmentUploadedCommand) TotalRows() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
-	return nil
+	return 0
 }
 
-func (rcv *SegmentUploadedCommand) ObjectSizeBytes() uint64 {
+func (rcv *SegmentUploadedCommand) MutateTotalRows(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(10, n)
+}
+
+func (rcv *SegmentUploadedCommand) UploadedAt() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -85,11 +169,11 @@ func (rcv *SegmentUploadedCommand) ObjectSizeBytes() uint64 {
 	return 0
 }
 
-func (rcv *SegmentUploadedCommand) MutateObjectSizeBytes(n uint64) bool {
+func (rcv *SegmentUploadedCommand) MutateUploadedAt(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(12, n)
 }
 
-func (rcv *SegmentUploadedCommand) ObjectChecksum() []byte {
+func (rcv *SegmentUploadedCommand) UploadedBy() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -100,23 +184,26 @@ func (rcv *SegmentUploadedCommand) ObjectChecksum() []byte {
 func SegmentUploadedCommandStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }
-func SegmentUploadedCommandAddShardId(builder *flatbuffers.Builder, shardId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(shardId), 0)
-}
 func SegmentUploadedCommandAddSegmentId(builder *flatbuffers.Builder, segmentId uint32) {
-	builder.PrependUint32Slot(1, segmentId, 0)
+	builder.PrependUint32Slot(0, segmentId, 0)
 }
 func SegmentUploadedCommandAddObjectBucket(builder *flatbuffers.Builder, objectBucket flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(objectBucket), 0)
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(objectBucket), 0)
 }
-func SegmentUploadedCommandAddObjectKey(builder *flatbuffers.Builder, objectKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(objectKey), 0)
+func SegmentUploadedCommandAddFiles(builder *flatbuffers.Builder, files flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(files), 0)
 }
-func SegmentUploadedCommandAddObjectSizeBytes(builder *flatbuffers.Builder, objectSizeBytes uint64) {
-	builder.PrependUint64Slot(4, objectSizeBytes, 0)
+func SegmentUploadedCommandStartFilesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
-func SegmentUploadedCommandAddObjectChecksum(builder *flatbuffers.Builder, objectChecksum flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(objectChecksum), 0)
+func SegmentUploadedCommandAddTotalRows(builder *flatbuffers.Builder, totalRows uint64) {
+	builder.PrependUint64Slot(3, totalRows, 0)
+}
+func SegmentUploadedCommandAddUploadedAt(builder *flatbuffers.Builder, uploadedAt uint64) {
+	builder.PrependUint64Slot(4, uploadedAt, 0)
+}
+func SegmentUploadedCommandAddUploadedBy(builder *flatbuffers.Builder, uploadedBy flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(uploadedBy), 0)
 }
 func SegmentUploadedCommandEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

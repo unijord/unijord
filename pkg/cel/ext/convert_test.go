@@ -73,7 +73,7 @@ func TestConvertFuncs(t *testing.T) {
 			vars:     map[string]any{"i": int64(42)},
 			expected: 42.0,
 		},
-		
+
 		{
 			name:     "toString_int",
 			expr:     "toString(i)",
