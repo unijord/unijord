@@ -18,8 +18,10 @@ table KeyValue {
 table WalEntry {
   event_id: [ubyte];
   event_type: string;
-  // Microseconds since epoch
+  // Microseconds since epoch - when the event occurred (client-provided)
   occurred_at: uint64;
+  // Microseconds since epoch - when the event was ingested (server-assigned)
+  ingested_at: uint64;
   // Event payload
   payload: [ubyte];
   compression: CompressionType;
