@@ -300,7 +300,10 @@ func BuildArrowSchemaWithMetadata(
 	}
 
 	// Build schema-level metadata with iceberg.schema
-	schemaMeta := buildIcebergSchemaMetadata(columns, schemaID)
+	schemaMeta, err := buildIcebergSchemaMetadata(columns, schemaID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build iceberg schema metadata: %w", err)
+	}
 
 	return arrow.NewSchema(fields, schemaMeta), nil
 }
@@ -323,7 +326,7 @@ type IcebergField struct {
 
 // buildIcebergSchemaMetadata creates schema-level metadata containing iceberg.schema.
 // The schemaID is used in the iceberg.schema JSON to identify the schema version.
-func buildIcebergSchemaMetadata(columns []CompiledColumn, schemaID int) *arrow.Metadata {
+func buildIcebergSchemaMetadata(columns []CompiledColumn, schemaID int) (*arrow.Metadata, error) {
 	icebergFields := make([]IcebergField, 0, len(columns))
 
 	for _, col := range columns {
@@ -348,7 +351,7 @@ func buildIcebergSchemaMetadata(columns []CompiledColumn, schemaID int) *arrow.M
 
 	// no schema metadata.
 	if len(icebergFields) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	schema := IcebergSchema{
@@ -359,14 +362,14 @@ func buildIcebergSchemaMetadata(columns []CompiledColumn, schemaID int) *arrow.M
 
 	schemaJSON, err := json.Marshal(schema)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("marshal iceberg schema: %w", err)
 	}
 
 	meta := arrow.NewMetadata(
 		[]string{"iceberg.schema"},
 		[]string{string(schemaJSON)},
 	)
-	return &meta
+	return &meta, nil
 }
 
 // arrowTypeToIcebergType converts Arrow data type to Iceberg type string.

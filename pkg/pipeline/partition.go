@@ -160,9 +160,9 @@ func icebergHash(value any) uint32 {
 
 // hashLong hashes a 64-bit integer using little-endian byte representation.
 func hashLong(v int64) uint32 {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(v))
-	return murmur3.Sum32(buf)
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(v))
+	return murmur3.Sum32(buf[:])
 }
 
 // hashInt hashes a 32-bit integer (used for boolean).
@@ -338,9 +338,12 @@ func toTime(value any) time.Time {
 	case int:
 		return intToTime(int64(v)).UTC()
 	case float64:
-		// Assume seconds since epoch with fractional part
-		sec := int64(v)
-		nsec := int64((v - float64(sec)) * 1e9)
+		// we are Assuming seconds since epoch with fractional part
+		// Floor to handle negative values correctly
+		// while don't if this ever happen just being defensive here.
+		// while it's also uncommon to have a float64 but some client like python time.Time() emits.
+		sec := int64(math.Floor(v))
+		nsec := int64((v - math.Floor(v)) * 1e9)
 		return time.Unix(sec, nsec).UTC()
 	case string:
 		// Try common formats
@@ -480,12 +483,7 @@ func BuildPartitionPath(partitionSpec []CompiledPartitionField, row []any) strin
 		return ""
 	}
 
-	// Join with /
-	path := parts[0]
-	for i := 1; i < len(parts); i++ {
-		path += "/" + parts[i]
-	}
-	return path
+	return strings.Join(parts, "/")
 }
 
 // BuildPartitionTuple builds Iceberg partition values for manifest metadata.
