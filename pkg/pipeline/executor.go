@@ -34,7 +34,7 @@ func (e *Executor) ProcessWithEnvelope(event map[string]any, envelope map[string
 	for k, v := range envelope {
 		activation[k] = v
 	}
-	
+
 	return e.processWithActivation(activation)
 }
 

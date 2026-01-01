@@ -226,7 +226,7 @@ func (c *Config) validatePartitionSpec(columnFieldIDs map[int]bool) error {
 
 	for i, pf := range c.PartitionSpec {
 		if !columnFieldIDs[pf.SourceID] {
-			return fmt.Errorf("partition_spec[%d]: %w: %d", i, ErrUnknownSourceID, pf.SourceID)
+			return fmt.Errorf("partition_spec[%d]: %w: source_id %d not found (hint: ensure target column has field_id: %d)", i, ErrUnknownSourceID, pf.SourceID, pf.SourceID)
 		}
 
 		if pf.FieldID <= 0 {
@@ -253,7 +253,7 @@ func (c *Config) validatePartitionSpec(columnFieldIDs map[int]bool) error {
 func (c *Config) validateSortOrder(columnFieldIDs map[int]bool) error {
 	for i, sf := range c.SortOrder {
 		if !columnFieldIDs[sf.SourceID] {
-			return fmt.Errorf("sort_order[%d]: %w: %d", i, ErrUnknownSourceID, sf.SourceID)
+			return fmt.Errorf("sort_order[%d]: %w: source_id %d not found (hint: ensure target column has field_id: %d)", i, ErrUnknownSourceID, sf.SourceID, sf.SourceID)
 		}
 
 		if !isValidTransform(sf.Transform) {
