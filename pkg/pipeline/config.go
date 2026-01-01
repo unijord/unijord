@@ -15,6 +15,11 @@ const (
 
 	// SchemaFormatAvro indicates Avro schema format.
 	SchemaFormatAvro SchemaFormat = "avro"
+
+	// MaxFieldID is the maximum allowed field_id per Iceberg spec.
+	// Iceberg reserves field IDs above MAX_INT-200 for internal use.
+	// Reference: https://iceberg.apache.org/spec/#reserved-field-ids
+	MaxFieldID = 2147483447
 )
 
 // SortDirection defines the sort order direction.
@@ -57,7 +62,7 @@ var (
 	// ErrDuplicateFieldID is returned when two columns have the same field_id.
 	ErrDuplicateFieldID = errors.New("duplicate field_id")
 	// ErrInvalidFieldID is returned when field_id is out of valid range.
-	ErrInvalidFieldID = errors.New("field_id must be positive and less than 2147483447")
+	ErrInvalidFieldID = errors.New("field_id must be positive and less than MaxFieldID")
 	// ErrInvalidPartitionSpec is returned when partition_spec is invalid.
 	ErrInvalidPartitionSpec = errors.New("invalid partition_spec")
 	// ErrUnknownSourceID is returned when source_id references unknown column.
@@ -152,8 +157,7 @@ type Column struct {
 	// FieldID is an optional field ID for schema evolution support.
 	// When specified, this ID is written to Parquet file metadata
 	// for proper column mapping during schema evolution.
-	// Must be unique within the table and less than 2147483447- ICEBERG Limit.
-	// https://iceberg.apache.org/spec/#reserved-field-ids MAX-200
+	// Must be unique within the table and less than MaxFieldID.
 	FieldID *int `json:"field_id,omitempty"`
 
 	// As overrides the CEL-inferred type with an explicit output type.
@@ -193,7 +197,7 @@ func (c *Config) Validate() error {
 
 		if col.FieldID != nil {
 			id := *col.FieldID
-			if id <= 0 || id >= 2147483447 {
+			if id <= 0 || id >= MaxFieldID {
 				return fmt.Errorf("column[%d] %q: %w", i, col.Name, ErrInvalidFieldID)
 			}
 			if fieldIDs[id] {
