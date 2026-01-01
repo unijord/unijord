@@ -28,12 +28,13 @@ func (e *Executor) Process(event map[string]any) Result {
 func (e *Executor) ProcessWithEnvelope(event map[string]any, envelope map[string]any) Result {
 	// Build CEL activation with event and envelope variables
 	activation := make(map[string]any, len(envelope)+1)
-	activation["event"] = event
 
-	// envelope fields
 	for k, v := range envelope {
 		activation[k] = v
 	}
+
+	// IMP: Set event last to ensure envelope cannot override it
+	activation["event"] = event
 
 	return e.processWithActivation(activation)
 }
